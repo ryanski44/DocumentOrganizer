@@ -19,6 +19,7 @@ namespace DocumentOrganizerUI
         private DirectoryInfo processed;
         private DirectoryInfo preview50Dir;
         private DirectoryInfo preview300Dir;
+        private DirectoryInfo textDir;
         private string ghostScriptPath;
         private string tesseractPath;
         private CancellationTokenSource cts;
@@ -44,6 +45,11 @@ namespace DocumentOrganizerUI
             if (!preview300Dir.Exists)
             {
                 preview300Dir.Create();
+            }
+            textDir = new DirectoryInfo(Path.Combine(processed.FullName, "previews", "text"));
+            if (!textDir.Exists)
+            {
+                textDir.Create();
             }
         }
 
@@ -119,108 +125,126 @@ namespace DocumentOrganizerUI
 
                 if (nextFile != null)
                 {
+                    FileInfo processedFile;
+                    await createLock.WaitAsync();
                     try
                     {
-                        FileInfo processedFile;
-                        await createLock.WaitAsync();
-                        try
-                        {
-                            processedFile = new FileInfo(GetUniqueOutputFilePath(Path.Combine(processed.FullName, nextFile.NameWithoutExtension() + ".pdf")));
-                            //create an empty file to reserve this name
-                            processedFile.Create().Close();
-                        }
-                        finally
-                        {
-                            createLock.Release();
-                        }
+                        processedFile = new FileInfo(GetUniqueOutputFilePath(Path.Combine(processed.FullName, nextFile.NameWithoutExtension() + ".pdf")));
+                        //create an empty file to reserve this name
+                        processedFile.Create().Close();
+                    }
+                    finally
+                    {
+                        createLock.Release();
+                    }
 
-                        if (nextFile.Extension.Equals(".pdf", StringComparison.InvariantCultureIgnoreCase))
-                        {
-                            bool hasText = false;
+                    if (nextFile.Extension.Equals(".pdf", StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        bool hasText = false;
 
-                            //if pdf, open the pdf and determine if it has a text layer
-                            using (PdfReader reader = new PdfReader(nextFile.FullName))
+                        //if pdf, open the pdf and determine if it has a text layer
+                        using (PdfReader reader = new PdfReader(nextFile.FullName))
+                        {
+                            iTextSharp.text.pdf.parser.PdfReaderContentParser parser = new iTextSharp.text.pdf.parser.PdfReaderContentParser(reader);
+                            iTextSharp.text.pdf.parser.ITextExtractionStrategy strategy;
+                            for (int i = 1; i <= reader.NumberOfPages; i++)
                             {
-                                iTextSharp.text.pdf.parser.PdfReaderContentParser parser = new iTextSharp.text.pdf.parser.PdfReaderContentParser(reader);
-                                iTextSharp.text.pdf.parser.ITextExtractionStrategy strategy;
-                                for (int i = 1; i <= reader.NumberOfPages; i++)
+                                //byte[] pageContent = reader.GetPageContent(i);
+                                strategy = parser.ProcessContent(i, new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy());
+                                string text = strategy.GetResultantText();
+                                if (!String.IsNullOrEmpty(text))
                                 {
-                                    //byte[] pageContent = reader.GetPageContent(i);
-                                    strategy = parser.ProcessContent(i, new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy());
-                                    string text = strategy.GetResultantText();
-                                    if (!String.IsNullOrEmpty(text))
-                                    {
-                                        hasText = true;
-                                        break;
-                                    }
+                                    hasText = true;
+                                    break;
                                 }
                             }
-
-                            if (!hasText)//If it does not have a text layer, convert to images with ghostscript
-                            {
-                                RunSilentProcess(ghostScriptPath, tempDir.FullName, $"-q -dNOPAUSE -dBATCH -sDEVICE=pngalpha -dUseCropBox -sOutputFile=output-%d.png -r600 \"{nextFile.Name}\"");
-
-                                List<string> pages = new List<string>();
-
-                                foreach (var pageImageFile in tempDir.GetFiles("output-*.png"))
-                                {
-                                    //run tesseract.exe source output(without extension) -l eng PDF to get PDF file
-                                    RunSilentProcess(tesseractPath, tempDir.FullName, $"{pageImageFile.Name} {pageImageFile.NameWithoutExtension()} -l eng PDF");
-
-                                    pages.Add(pageImageFile.NameWithoutExtension() + ".pdf");
-                                    pageImageFile.Delete();
-                                }
-
-                                if (pages.Count == 1)
-                                {
-                                    MoveAndOverwrite(Path.Combine(tempDir.FullName, pages[0]), processedFile.FullName);
-                                }
-                                else if (pages.Count > 1)
-                                {
-                                    //if multiple pages use ghostscript to combine to one pdf
-                                    string inputFilesCommandLine = String.Join(" ", pages);
-                                    RunSilentProcess(ghostScriptPath, tempDir.FullName, $"-q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dPDFSETTINGS=/prepress -sOutputFile=output.pdf {inputFilesCommandLine}");
-
-                                    MoveAndOverwrite(Path.Combine(tempDir.FullName, "output.pdf"), processedFile.FullName);
-                                    foreach (var page in pages)
-                                    {
-                                        File.Delete(Path.Combine(tempDir.FullName, page));
-                                    }
-                                }
-                                nextFile.Delete();
-                            }
-                            else//If it has a text layer, leave it as is. 
-                            {
-                                MoveAndOverwrite(nextFile.FullName, processedFile.FullName);
-                            }
                         }
-                        else//assume image
-                        {
-                            //run tesseract.exe source output(without extension) -l eng PDF to get PDF file
-                            RunSilentProcess(tesseractPath, tempDir.FullName, $"{nextFile.Name} {nextFile.NameWithoutExtension()} -l eng PDF");
 
-                            MoveAndOverwrite(Path.Combine(tempDir.FullName, nextFile.NameWithoutExtension() + ".pdf"), processedFile.FullName);
+                        if (!hasText)//If it does not have a text layer, convert to images with ghostscript
+                        {
+                            RunSilentProcess(ghostScriptPath, tempDir.FullName, $"-q -dNOPAUSE -dBATCH -sDEVICE=pngalpha -dUseCropBox -sOutputFile=output-%d.png -r600 \"{nextFile.Name}\"");
+
+                            List<string> pages = new List<string>();
+
+                            foreach (var pageImageFile in tempDir.GetFiles("output-*.png"))
+                            {
+                                //run tesseract.exe source output(without extension) -l eng PDF to get PDF file
+                                RunSilentProcess(tesseractPath, tempDir.FullName, $"{pageImageFile.Name} {pageImageFile.NameWithoutExtension()} -l eng PDF");
+
+                                pages.Add(pageImageFile.NameWithoutExtension() + ".pdf");
+                                pageImageFile.Delete();
+                            }
+
+                            if (pages.Count == 1)
+                            {
+                                MoveAndOverwrite(Path.Combine(tempDir.FullName, pages[0]), processedFile.FullName);
+                            }
+                            else if (pages.Count > 1)
+                            {
+                                //if multiple pages use ghostscript to combine to one pdf
+                                string inputFilesCommandLine = String.Join(" ", pages);
+                                RunSilentProcess(ghostScriptPath, tempDir.FullName, $"-q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dPDFSETTINGS=/prepress -sOutputFile=output.pdf {inputFilesCommandLine}");
+
+                                MoveAndOverwrite(Path.Combine(tempDir.FullName, "output.pdf"), processedFile.FullName);
+                                foreach (var page in pages)
+                                {
+                                    File.Delete(Path.Combine(tempDir.FullName, page));
+                                }
+                            }
                             nextFile.Delete();
                         }
-
-                        //make previews
-                        RenderPDFToJpegFile(processedFile.FullName, 50, Path.Combine(preview50Dir.FullName, processedFile.NameWithoutExtension() + ".jpg"));
-                        RenderPDFToJpegFile(processedFile.FullName, 300, Path.Combine(preview300Dir.FullName, processedFile.NameWithoutExtension() + ".jpg"));
+                        else//If it has a text layer, leave it as is. 
+                        {
+                            MoveAndOverwrite(nextFile.FullName, processedFile.FullName);
+                        }
                     }
-                    catch (Exception ex)
+                    else//assume image
                     {
-                        Debug.WriteLine(ex.ToString());
+                        //run tesseract.exe source output(without extension) -l eng PDF to get PDF file
+                        RunSilentProcess(tesseractPath, tempDir.FullName, $"\"{nextFile.Name}\" \"{nextFile.NameWithoutExtension()}\" -l eng PDF");
+
+                        MoveAndOverwrite(Path.Combine(tempDir.FullName, nextFile.NameWithoutExtension() + ".pdf"), processedFile.FullName);
+                        nextFile.Delete();
                     }
+
+                    //make previews
+                    RenderPDFToJpegFile(processedFile.FullName, 50, Path.Combine(preview50Dir.FullName, processedFile.NameWithoutExtension() + ".jpg"));
+                    RenderPDFToJpegFile(processedFile.FullName, 300, Path.Combine(preview300Dir.FullName, processedFile.NameWithoutExtension() + ".jpg"));
+                    //output text
+                    File.WriteAllText(Path.Combine(textDir.FullName, processedFile.NameWithoutExtension() + ".txt"), ExtractText(processedFile.FullName));
                 }
-            }
-            finally
-            {
                 tempDir.Delete(true);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex.ToString());
             }
             return false;
         }
 
-        private static void RunSilentProcess(string imagePath, string workingDir, string arguments)
+        private static string ExtractText(string pdfFilePath)
+        {
+            StringBuilder sb = new StringBuilder();
+            //if pdf, open the pdf and determine if it has a text layer
+            using (PdfReader reader = new PdfReader(pdfFilePath))
+            {
+                iTextSharp.text.pdf.parser.PdfReaderContentParser parser = new iTextSharp.text.pdf.parser.PdfReaderContentParser(reader);
+                iTextSharp.text.pdf.parser.ITextExtractionStrategy strategy;
+                for (int i = 1; i <= reader.NumberOfPages; i++)
+                {
+                    strategy = parser.ProcessContent(i, new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy());
+                    string text = strategy.GetResultantText();
+                    if (!String.IsNullOrEmpty(text))
+                    {
+                        sb.AppendLine(text);
+                    }
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        public static void RunSilentProcess(string imagePath, string workingDir, string arguments)
         {
             var psi = new ProcessStartInfo(imagePath, arguments);
             psi.WorkingDirectory = workingDir;

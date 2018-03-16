@@ -10,6 +10,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -22,7 +23,6 @@ namespace DocumentOrganizerUI
         private DirectoryInfo target;
         private FileInfo[] files;
         private int filesIndex;
-        private Task loadingTask;
         private List<int> selectedImages;
         private string ghostScriptPath;
 
@@ -43,6 +43,7 @@ namespace DocumentOrganizerUI
             files = await Task.Run(() => processed.GetAllFiles().Where(x => x.Extension == ".pdf").ToArray());
             filesIndex = 0;
             LoadPicture();
+            LoadPreviews();
         }
 
         private void LoadPicture()
@@ -83,28 +84,77 @@ namespace DocumentOrganizerUI
             {
                 selectedImages.Add(filesIndex);
             }
-            await LoadPreviews();
+            LoadPreviews();
         }
 
         private async Task ProcessAsync()
         {
-            var filesToProcess = selectedImages.ToList();
-            selectedImages.Clear();
-            await LoadPreviews();
-
-            foreach(var fileId in filesToProcess)
+            if (selectedImages.Any())
             {
-                var file = files[fileId];
-                //TODO: window to enter new details
-                //move file to output
-                //delete previews
-                //TODO: add text to previews
+                var filesToProcess = selectedImages.Select(i => files[i]).ToList();
+                selectedImages.Clear();
+                LoadPreviews();
+
+                Task<string> processingTask = Task.Run(() =>
+                {
+                    if (filesToProcess.Count > 1)
+                    {
+                        //combine
+                        var paths = filesToProcess.Select(f => f.FullName).ToList();
+                        string inputFilesCommandLine = String.Join(" ", paths.Select(p => $"\"{p}\""));
+                        var combinedFilePath = Path.GetTempFileName();
+                        OCRProcessor.RunSilentProcess(ghostScriptPath, processed.FullName, $"-q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dPDFSETTINGS=/prepress -sOutputFile=\"{combinedFilePath}\" {inputFilesCommandLine}");
+                        
+                        return combinedFilePath;
+                    }
+                    else
+                    {
+                        return filesToProcess.First().FullName;
+                    }
+                });
+
+                string text = File.ReadAllText(Path.Combine(processed.FullName, "previews", "text", filesToProcess.First().NameWithoutExtension() + ".txt"));
+
+                FileInfo targetFile = new FileInfo(Path.Combine(target.FullName, filesToProcess.First().Name));
                 //use text to guess file name
+               
                 //hardcode rules here
+
+                //window to enter file name
+                if(!targetFile.Directory.Exists)
+                {
+                    targetFile.Directory.Create();
+                }
+                var dlg1 = new SaveFileDialog
+                {
+                    FileName = targetFile.Name,
+                    InitialDirectory = targetFile.Directory.FullName
+                };
+
+                var result = dlg1.ShowDialog();
+
+                if (result == DialogResult.OK)
+                {
+                    targetFile = new FileInfo(dlg1.FileName);
+                    string sourceFilePath = await processingTask;
+                    File.Move(sourceFilePath, targetFile.FullName);
+
+                    //cleanup
+                    foreach (var file in filesToProcess)
+                    {
+                        File.Delete(file.FullName);
+                        //delete previews
+                        File.Delete(Path.Combine(processed.FullName, "previews", "50", file.NameWithoutExtension() + ".jpg"));
+                        File.Delete(Path.Combine(processed.FullName, "previews", "300", file.NameWithoutExtension() + ".jpg"));
+                        File.Delete(Path.Combine(processed.FullName, "previews", "text", file.NameWithoutExtension() + ".txt"));
+                    }
+
+                    await LoadFolderAsync();
+                }
             }
         }
 
-        private async Task LoadPreviews()
+        private void LoadPreviews()
         {
             flowLayoutPanelLeft.Controls.Clear();
             
@@ -169,6 +219,11 @@ namespace DocumentOrganizerUI
         private async void Organizer_FormClosing(object sender, FormClosingEventArgs e)
         {
             await processor.StopAsync();
+        }
+
+        private async void refreshToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            await LoadFolderAsync();
         }
     }
 }
