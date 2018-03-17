@@ -114,28 +114,24 @@ namespace DocumentOrganizerUI
                 });
 
                 string text = File.ReadAllText(Path.Combine(processed.FullName, "previews", "text", filesToProcess.First().NameWithoutExtension() + ".txt"));
+                text = text.Replace("\n", "\r\n");
 
-                FileInfo targetFile = new FileInfo(Path.Combine(target.FullName, filesToProcess.First().Name));
-                //use text to guess file name
-               
-                //hardcode rules here
-
-                //window to enter file name
-                if(!targetFile.Directory.Exists)
+                var dlg1 = new FilterAndSaveDialog
                 {
-                    targetFile.Directory.Create();
-                }
-                var dlg1 = new SaveFileDialog
-                {
-                    FileName = targetFile.Name,
-                    InitialDirectory = targetFile.Directory.FullName
+                    PdfText = text,
+                    BaseTargetDir = target.FullName,
+                    OutputFilePath = Path.Combine(target.FullName, filesToProcess.First().Name)
                 };
 
-                var result = dlg1.ShowDialog();
+                var result = dlg1.ShowDialog(this);
 
                 if (result == DialogResult.OK)
                 {
-                    targetFile = new FileInfo(dlg1.FileName);
+                    var targetFile = new FileInfo(dlg1.OutputFilePath);
+                    if (!targetFile.Directory.Exists)
+                    {
+                        targetFile.Directory.Create();
+                    }
                     string sourceFilePath = await processingTask;
                     File.Move(sourceFilePath, targetFile.FullName);
 

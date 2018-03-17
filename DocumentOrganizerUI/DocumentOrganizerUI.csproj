@@ -58,11 +58,11 @@
     <Compile Include="Extensions\DirectoryInfoExtensions.cs" />
     <Compile Include="Extensions\FileInfoExtensions.cs" />
     <Compile Include="Filter.cs" />
-    <Compile Include="FilterAndSaveControl.cs">
-      <SubType>UserControl</SubType>
+    <Compile Include="FilterAndSaveDialog.cs">
+      <SubType>Form</SubType>
     </Compile>
-    <Compile Include="FilterAndSaveControl.Designer.cs">
-      <DependentUpon>FilterAndSaveControl.cs</DependentUpon>
+    <Compile Include="FilterAndSaveDialog.Designer.cs">
+      <DependentUpon>FilterAndSaveDialog.cs</DependentUpon>
     </Compile>
     <Compile Include="OcrProcessor.cs" />
     <Compile Include="FolderBrowserDialogEx.cs">
@@ -77,8 +77,8 @@
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="WatchedDirectory.cs" />
-    <EmbeddedResource Include="FilterAndSaveControl.resx">
-      <DependentUpon>FilterAndSaveControl.cs</DependentUpon>
+    <EmbeddedResource Include="FilterAndSaveDialog.resx">
+      <DependentUpon>FilterAndSaveDialog.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Organizer.resx">
       <DependentUpon>Organizer.cs</DependentUpon>

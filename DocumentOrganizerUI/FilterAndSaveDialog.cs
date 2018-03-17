@@ -13,17 +13,19 @@ using System.Text.RegularExpressions;
 
 namespace DocumentOrganizerUI
 {
-    public partial class FilterAndSaveControl : UserControl
+    public partial class FilterAndSaveDialog : Form
     {
         private static FileInfo filterFile = new FileInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DocOrganizer", "filter.json"));
 
         private List<Filter> filters;
-        public FilterAndSaveControl()
+        public FilterAndSaveDialog()
         {
             InitializeComponent();
         }
 
         public string PdfText { get { return textBoxPdfText.Text; } set { textBoxPdfText.Text = value; } }
+
+        public string BaseTargetDir { get; set; }
 
         public string OutputFilePath { get { return textBoxOutputFilePath.Text; } set { textBoxOutputFilePath.Text = value; } }
 
@@ -89,7 +91,7 @@ namespace DocumentOrganizerUI
 
                 if (captures != null)
                 {
-                    textBoxResultingFilePath.Text = String.Format(textBoxFilterOutputPath.Text, captures.Cast<object>().ToArray());
+                    textBoxResultingFilePath.Text = Path.Combine(BaseTargetDir, String.Format(textBoxFilterOutputPath.Text, captures.Cast<object>().ToArray()));
                     buttonSaveFilter.Enabled = true;
                 }
                 else
@@ -119,8 +121,33 @@ namespace DocumentOrganizerUI
 
         private void buttonSave_Click(object sender, EventArgs e)
         {
-            //TODO: convert this to form from user control
             this.DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        private void buttonCancel_Click(object sender, EventArgs e)
+        {
+            this.DialogResult = DialogResult.Cancel;
+            Close();
+        }
+
+        private void buttonBrowse_Click(object sender, EventArgs e)
+        {
+            
+            var dlg1 = new SaveFileDialog();
+            if (!String.IsNullOrEmpty(textBoxOutputFilePath.Text))
+            {
+                FileInfo targetFile = new FileInfo(textBoxOutputFilePath.Text);
+                dlg1.FileName = targetFile.Name;
+                dlg1.InitialDirectory = targetFile.Directory.FullName;
+            }
+
+            var result = dlg1.ShowDialog();
+
+            if (result == DialogResult.OK)
+            {
+                textBoxOutputFilePath.Text = dlg1.FileName;
+            }
         }
     }
 }
