@@ -184,6 +184,17 @@ namespace DocumentOrganizerUI
             {
                 await ProcessAsync();
             }
+            else if(e.KeyCode == Keys.Delete)
+            {
+                var file = files[filesIndex];
+                File.Delete(file.FullName);
+                //delete previews
+                File.Delete(Path.Combine(processed.FullName, "previews", "50", file.NameWithoutExtension() + ".jpg"));
+                File.Delete(Path.Combine(processed.FullName, "previews", "300", file.NameWithoutExtension() + ".jpg"));
+                File.Delete(Path.Combine(processed.FullName, "previews", "text", file.NameWithoutExtension() + ".txt"));
+
+                await LoadFolderAsync();
+            }
         }
 
         private OCRProcessor processor;

@@ -103,6 +103,7 @@
             this.textBoxPdfText.Multiline = true;
             this.textBoxPdfText.Name = "textBoxPdfText";
             this.textBoxPdfText.ReadOnly = true;
+            this.textBoxPdfText.ScrollBars = System.Windows.Forms.ScrollBars.Both;
             this.textBoxPdfText.Size = new System.Drawing.Size(946, 433);
             this.textBoxPdfText.TabIndex = 1;
             // 
