@@ -9,6 +9,8 @@ using iTextSharp.text;
 using iTextSharp.text.pdf;
 using System.Diagnostics;
 using DocumentOrganizerUI.Extensions;
+using System.Drawing;
+using System.Drawing.Imaging;
 
 namespace DocumentOrganizerUI
 {
@@ -152,7 +154,7 @@ namespace DocumentOrganizerUI
                                 //byte[] pageContent = reader.GetPageContent(i);
                                 strategy = parser.ProcessContent(i, new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy());
                                 string text = strategy.GetResultantText();
-                                if (!String.IsNullOrEmpty(text))
+                                if (!text.IsNullOrWhiteSpaceOrGibberish())
                                 {
                                     hasText = true;
                                     break;
@@ -168,11 +170,44 @@ namespace DocumentOrganizerUI
 
                             foreach (var pageImageFile in tempDir.GetFiles("output-*.png"))
                             {
+                                var imageFile = pageImageFile;
+                                //verify image size is reasonable
+                                try
+                                {
+                                    bool converted = false;
+                                    using (var i = Bitmap.FromFile(pageImageFile.FullName))
+                                    {
+                                        //5100 width for 600 dpi 8.5 inch
+                                        if (i.Size.Width > 6000 || i.Size.Height > 12000)
+                                        {
+                                            using (var outputImage = new Bitmap(5100, (int)(((double)i.Size.Height / i.Size.Width) * 5100), PixelFormat.Format24bppRgb))
+                                            {
+                                                outputImage.SetResolution(600, 600);
+                                                using (var g = Graphics.FromImage(outputImage))
+                                                {
+                                                    g.DrawImage(i, 0, 0, outputImage.Width, outputImage.Height);
+                                                }
+                                                imageFile = new FileInfo(Path.Combine(pageImageFile.Directory.FullName, pageImageFile.NameWithoutExtension() + "F.png"));
+                                                outputImage.Save(imageFile.FullName, ImageFormat.Png);
+                                                converted = true;
+                                            }
+                                        }
+                                    }
+                                    if (converted)
+                                    {
+                                        pageImageFile.Delete();
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.WriteLine(ex.ToString());
+                                }
+                                
                                 //run tesseract.exe source output(without extension) -l eng PDF to get PDF file
-                                RunSilentProcess(tesseractPath, tempDir.FullName, $"{pageImageFile.Name} {pageImageFile.NameWithoutExtension()} -l eng PDF");
+                                RunSilentProcess(tesseractPath, tempDir.FullName, $"{imageFile.Name} {pageImageFile.NameWithoutExtension()} --oem 1 -l eng PDF");
 
                                 pages.Add(pageImageFile.NameWithoutExtension() + ".pdf");
-                                pageImageFile.Delete();
+                                imageFile.Delete();
                             }
 
                             if (pages.Count == 1)
@@ -201,7 +236,7 @@ namespace DocumentOrganizerUI
                     else//assume image
                     {
                         //run tesseract.exe source output(without extension) -l eng PDF to get PDF file
-                        RunSilentProcess(tesseractPath, tempDir.FullName, $"\"{nextFile.Name}\" \"{nextFile.NameWithoutExtension()}\" -l eng PDF");
+                        RunSilentProcess(tesseractPath, tempDir.FullName, $"\"{nextFile.Name}\" \"{nextFile.NameWithoutExtension()}\" --oem 1 -l eng PDF");
 
                         MoveAndOverwrite(Path.Combine(tempDir.FullName, nextFile.NameWithoutExtension() + ".pdf"), processedFile.FullName);
                         nextFile.Delete();
@@ -226,19 +261,26 @@ namespace DocumentOrganizerUI
         {
             StringBuilder sb = new StringBuilder();
             //if pdf, open the pdf and determine if it has a text layer
-            using (PdfReader reader = new PdfReader(pdfFilePath))
+            try
             {
-                iTextSharp.text.pdf.parser.PdfReaderContentParser parser = new iTextSharp.text.pdf.parser.PdfReaderContentParser(reader);
-                iTextSharp.text.pdf.parser.ITextExtractionStrategy strategy;
-                for (int i = 1; i <= reader.NumberOfPages; i++)
+                using (PdfReader reader = new PdfReader(pdfFilePath))
                 {
-                    strategy = parser.ProcessContent(i, new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy());
-                    string text = strategy.GetResultantText();
-                    if (!String.IsNullOrEmpty(text))
+                    iTextSharp.text.pdf.parser.PdfReaderContentParser parser = new iTextSharp.text.pdf.parser.PdfReaderContentParser(reader);
+                    iTextSharp.text.pdf.parser.ITextExtractionStrategy strategy;
+                    for (int i = 1; i <= reader.NumberOfPages; i++)
                     {
-                        sb.AppendLine(text);
+                        strategy = parser.ProcessContent(i, new iTextSharp.text.pdf.parser.SimpleTextExtractionStrategy());
+                        string text = strategy.GetResultantText();
+                        if (!String.IsNullOrEmpty(text))
+                        {
+                            sb.AppendLine(text);
+                        }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex.ToString());
             }
 
             return sb.ToString();
@@ -281,7 +323,7 @@ namespace DocumentOrganizerUI
             }
         }
 
-        private static string GetUniqueOutputFilePath(string desiredOutputFilePath)
+        public static string GetUniqueOutputFilePath(string desiredOutputFilePath)
         {
             while(File.Exists(desiredOutputFilePath))
             {

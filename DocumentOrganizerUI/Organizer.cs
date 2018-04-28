@@ -54,6 +54,10 @@ namespace DocumentOrganizerUI
                 pictureBox.ImageLocation = Path.Combine(processed.FullName, "previews", "300", pdfFile.NameWithoutExtension() + ".jpg");
                 toolStripStatusLabelText.Text = pdfFile.NameWithoutExtension();
             }
+            else
+            {
+                pictureBox.ImageLocation = null;
+            }
         }
 
         private async Task NextImageAsync()
@@ -127,22 +131,30 @@ namespace DocumentOrganizerUI
 
                 if (result == DialogResult.OK)
                 {
-                    var targetFile = new FileInfo(dlg1.OutputFilePath);
-                    if (!targetFile.Directory.Exists)
+                    try
                     {
-                        targetFile.Directory.Create();
-                    }
-                    string sourceFilePath = await processingTask;
-                    File.Move(sourceFilePath, targetFile.FullName);
+                        var targetFile = new FileInfo(dlg1.OutputFilePath);
+                        if (!targetFile.Directory.Exists)
+                        {
+                            targetFile.Directory.Create();
+                        }
+                        string sourceFilePath = await processingTask;
+                        string uniqueOutputPath = OCRProcessor.GetUniqueOutputFilePath(targetFile.FullName);
+                        File.Move(sourceFilePath, uniqueOutputPath);
 
-                    //cleanup
-                    foreach (var file in filesToProcess)
+                        //cleanup
+                        foreach (var file in filesToProcess)
+                        {
+                            File.Delete(file.FullName);
+                            //delete previews
+                            File.Delete(Path.Combine(processed.FullName, "previews", "50", file.NameWithoutExtension() + ".jpg"));
+                            File.Delete(Path.Combine(processed.FullName, "previews", "300", file.NameWithoutExtension() + ".jpg"));
+                            File.Delete(Path.Combine(processed.FullName, "previews", "text", file.NameWithoutExtension() + ".txt"));
+                        }
+                    }
+                    catch (Exception ex)
                     {
-                        File.Delete(file.FullName);
-                        //delete previews
-                        File.Delete(Path.Combine(processed.FullName, "previews", "50", file.NameWithoutExtension() + ".jpg"));
-                        File.Delete(Path.Combine(processed.FullName, "previews", "300", file.NameWithoutExtension() + ".jpg"));
-                        File.Delete(Path.Combine(processed.FullName, "previews", "text", file.NameWithoutExtension() + ".txt"));
+                        MessageBox.Show(ex.Message, "Exception", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
 
                     await LoadFolderAsync();

@@ -50,6 +50,8 @@ namespace DocumentOrganizerUI
                     break;
                 }
             }
+
+            this.AcceptButton = buttonSave;
         }
 
         private void textBoxRegexFilter_TextChanged(object sender, EventArgs e)
