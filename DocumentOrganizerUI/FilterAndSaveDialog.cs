@@ -85,6 +85,56 @@ namespace DocumentOrganizerUI
             return captures;
         }
 
+        private static Lazy<Dictionary<string, string>> StringReplacements = new Lazy<Dictionary<string, string>>(() =>
+         {
+             Dictionary<string, string> mapping = new Dictionary<string, string>();
+             mapping["jan"] = "01";
+             mapping["january"] = "01";
+             mapping["feb"] = "02";
+             mapping["february"] = "02";
+             mapping["mar"] = "03";
+             mapping["march"] = "03";
+             mapping["apr"] = "04";
+             mapping["april"] = "04";
+             mapping["may"] = "05";
+             mapping["jun"] = "06";
+             mapping["june"] = "06";
+             mapping["jul"] = "07";
+             mapping["july"] = "07";
+             mapping["aug"] = "08";
+             mapping["august"] = "08";
+             mapping["sep"] = "09";
+             mapping["september"] = "09";
+             mapping["oct"] = "10";
+             mapping["october"] = "10";
+             mapping["nov"] = "11";
+             mapping["november"] = "11";
+             mapping["dec"] = "12";
+             mapping["december"] = "12";
+             mapping["1"] = "01";
+             mapping["2"] = "02";
+             mapping["3"] = "03";
+             mapping["4"] = "04";
+             mapping["5"] = "05";
+             mapping["6"] = "06";
+             mapping["7"] = "07";
+             mapping["8"] = "08";
+             mapping["9"] = "09";
+
+             return mapping;
+         });
+
+        private static string CaptureStringReplace(string input)
+        {
+            var replacements = StringReplacements.Value;
+            string inputLower = input.ToLower();
+            if(replacements.ContainsKey(inputLower))
+            {
+                return replacements[inputLower];
+            }
+            return input;
+        }
+
         private void CalculateResulting()
         {
             try
@@ -93,6 +143,10 @@ namespace DocumentOrganizerUI
 
                 if (captures != null)
                 {
+                    for (int i = 0; i < captures.Count; i++)
+                    {
+                        captures[i] = CaptureStringReplace(captures[i]);
+                    }
                     textBoxResultingFilePath.Text = Path.Combine(BaseTargetDir, String.Format(textBoxFilterOutputPath.Text, captures.Cast<object>().ToArray()));
                     buttonSaveFilter.Enabled = true;
                 }
