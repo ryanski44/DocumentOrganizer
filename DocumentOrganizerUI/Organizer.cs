@@ -21,8 +21,8 @@ namespace DocumentOrganizerUI
         private DirectoryInfo source;
         private DirectoryInfo processed;
         private DirectoryInfo target;
-        private FileInfo[] files;
-        private int filesIndex;
+        private List<Document> documents;
+        private int documentsIndex;
         private List<int> selectedImages;
         private string ghostScriptPath;
 
@@ -40,19 +40,45 @@ namespace DocumentOrganizerUI
         private async Task LoadFolderAsync()
         {
             selectedImages.Clear();
-            files = await Task.Run(() => processed.GetAllFiles().Where(x => x.Extension == ".pdf").ToArray());
-            filesIndex = 0;
+            var tasks = new List<Task<Document>>();
+            foreach(var directory in processed.GetDirectories())
+            {
+                tasks.Add(Task.Run(() =>
+                {
+                    try
+                    {
+                        Document doc = Document.FromDirectory(directory);
+                        return doc;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(ex.ToString());
+                        return null;
+                    }
+                }));
+            }
+            documents = new List<Document>();
+            foreach (var task in tasks)
+            {
+                Document doc = await task;
+                if(doc != null)
+                {
+                    documents.Add(doc);
+                }
+            }
+            documents = documents.OrderBy(x => x.OriginalFile.Name).ToList();
+            documentsIndex = 0;
             LoadPicture();
             LoadPreviews();
         }
 
         private void LoadPicture()
         {
-            if (files.Length > filesIndex)
+            if (documents.Count > documentsIndex)
             {
-                FileInfo pdfFile = files[filesIndex];
-                pictureBox.ImageLocation = Path.Combine(processed.FullName, "previews", "300", pdfFile.NameWithoutExtension() + ".jpg");
-                toolStripStatusLabelText.Text = pdfFile.NameWithoutExtension();
+                Document doc = documents[documentsIndex];
+                pictureBox.ImageLocation = doc.Preview300File.FullName;
+                toolStripStatusLabelText.Text = doc.OriginalFile.NameWithoutExtension();
             }
             else
             {
@@ -60,51 +86,54 @@ namespace DocumentOrganizerUI
             }
         }
 
-        private async Task NextImageAsync()
+        private Task NextImageAsync()
         {
-            if(filesIndex < files.Length - 1)
+            if(documentsIndex < documents.Count - 1)
             {
-                filesIndex++;
+                documentsIndex++;
                 LoadPicture();
             }
+            return Task.CompletedTask;
         }
 
-        private async Task PrevImageAsync()
+        private Task PrevImageAsync()
         {
-            if(filesIndex > 0)
+            if(documentsIndex > 0)
             {
-                filesIndex--;
+                documentsIndex--;
                 LoadPicture();
             }
+            return Task.CompletedTask;
         }
 
-        private async Task SelectCurrentImage()
+        private Task SelectCurrentImage()
         {
-            if (selectedImages.Contains(filesIndex))
+            if (selectedImages.Contains(documentsIndex))
             {
-                selectedImages.Remove(filesIndex);
+                selectedImages.Remove(documentsIndex);
             }
             else
             {
-                selectedImages.Add(filesIndex);
+                selectedImages.Add(documentsIndex);
             }
             LoadPreviews();
+            return Task.CompletedTask;
         }
 
         private async Task ProcessAsync()
         {
             if (selectedImages.Any())
             {
-                var filesToProcess = selectedImages.Select(i => files[i]).ToList();
+                var docsToProcess = selectedImages.Select(i => documents[i]).ToList();
                 selectedImages.Clear();
                 LoadPreviews();
 
                 Task<string> processingTask = Task.Run(() =>
                 {
-                    if (filesToProcess.Count > 1)
+                    if (docsToProcess.Count > 1)
                     {
                         //combine
-                        var paths = filesToProcess.Select(f => f.FullName).ToList();
+                        var paths = docsToProcess.Select(doc => doc.ProcessedFile.FullName).ToList();
                         string inputFilesCommandLine = String.Join(" ", paths.Select(p => $"\"{p}\""));
                         var combinedFilePath = Path.GetTempFileName();
                         OCRProcessor.RunSilentProcess(ghostScriptPath, processed.FullName, $"-q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dPDFSETTINGS=/prepress -sOutputFile=\"{combinedFilePath}\" {inputFilesCommandLine}");
@@ -113,18 +142,24 @@ namespace DocumentOrganizerUI
                     }
                     else
                     {
-                        return filesToProcess.First().FullName;
+                        return docsToProcess.First().ProcessedFile.FullName;
                     }
                 });
 
-                string text = File.ReadAllText(Path.Combine(processed.FullName, "previews", "text", filesToProcess.First().NameWithoutExtension() + ".txt"));
-                text = text.Replace("\n", "\r\n");
+                StringBuilder textBuilder = new StringBuilder();
+
+                foreach(var doc in docsToProcess)
+                {
+                    string text = File.ReadAllText(doc.PreviewTextFile.FullName);
+                    text = text.Replace("\n", "\r\n");
+                    textBuilder.AppendLine(text);
+                }
 
                 var dlg1 = new FilterAndSaveDialog
                 {
-                    PdfText = text,
+                    PdfText = textBuilder.ToString(),
                     BaseTargetDir = target.FullName,
-                    OutputFilePath = Path.Combine(target.FullName, filesToProcess.First().Name)
+                    OutputFilePath = Path.Combine(target.FullName, docsToProcess.First().ProcessedFile.Name)
                 };
 
                 var result = dlg1.ShowDialog(this);
@@ -143,13 +178,9 @@ namespace DocumentOrganizerUI
                         File.Move(sourceFilePath, uniqueOutputPath);
 
                         //cleanup
-                        foreach (var file in filesToProcess)
+                        foreach (var doc in docsToProcess)
                         {
-                            File.Delete(file.FullName);
-                            //delete previews
-                            File.Delete(Path.Combine(processed.FullName, "previews", "50", file.NameWithoutExtension() + ".jpg"));
-                            File.Delete(Path.Combine(processed.FullName, "previews", "300", file.NameWithoutExtension() + ".jpg"));
-                            File.Delete(Path.Combine(processed.FullName, "previews", "text", file.NameWithoutExtension() + ".txt"));
+                            doc.Delete();
                         }
                     }
                     catch (Exception ex)
@@ -172,8 +203,8 @@ namespace DocumentOrganizerUI
                 pb.SizeMode = PictureBoxSizeMode.Zoom;
                 pb.Width = flowLayoutPanelLeft.Width;
                 pb.Height = (int)(pb.Width * 1.3);
-                pb.ImageLocation = Path.Combine(processed.FullName, "previews", "50", files[index].NameWithoutExtension() + ".jpg");
-                pb.Click += new EventHandler((o, i) => { filesIndex = index; LoadPicture(); });
+                pb.ImageLocation = documents[index].Preview50File.FullName;
+                pb.Click += new EventHandler((o, i) => { documentsIndex = index; LoadPicture(); });
                 flowLayoutPanelLeft.Controls.Add(pb);
             }
         }
@@ -192,20 +223,66 @@ namespace DocumentOrganizerUI
             {
                 await SelectCurrentImage();
             }
-            else if(e.KeyCode == Keys.Enter)
+            else if (e.KeyCode == Keys.Enter)
             {
                 await ProcessAsync();
             }
-            else if(e.KeyCode == Keys.Delete)
+            else if (e.KeyCode == Keys.Delete)
             {
-                var file = files[filesIndex];
-                File.Delete(file.FullName);
-                //delete previews
-                File.Delete(Path.Combine(processed.FullName, "previews", "50", file.NameWithoutExtension() + ".jpg"));
-                File.Delete(Path.Combine(processed.FullName, "previews", "300", file.NameWithoutExtension() + ".jpg"));
-                File.Delete(Path.Combine(processed.FullName, "previews", "text", file.NameWithoutExtension() + ".txt"));
+                pictureBox.ImageLocation = null;
+                var doc = documents[documentsIndex];
+                doc.Delete();
 
                 await LoadFolderAsync();
+            }
+            else if (e.KeyCode == Keys.R)
+            {
+                var doc = documents[documentsIndex];
+                //only supported for image sources
+                if (doc.OriginalFile.Extension != ".pdf")
+                {
+                    RotateDialog rotateDialog = new RotateDialog(doc);
+
+                    var result = rotateDialog.ShowDialog(this);
+
+                    if (result == DialogResult.OK)
+                    {
+                        int rotation = rotateDialog.Rotation;
+                        if (rotation != 0)
+                        {
+                            try
+                            {
+                                using (Image i = Image.FromFile(doc.OriginalFile.FullName))
+                                {
+                                    if (rotation == 90)
+                                    {
+                                        i.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                                    }
+                                    else if (rotation == 180)
+                                    {
+                                        i.RotateFlip(RotateFlipType.Rotate180FlipNone);
+                                    }
+                                    else if (rotation == 270)
+                                    {
+                                        i.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                                    }
+                                    else
+                                    {
+                                        throw new Exception($"Unexpected rotation of {rotation}");
+                                    }
+                                    i.Save(Path.Combine(source.FullName, doc.OriginalFile.NameWithoutExtension() + ".png"));
+                                }
+                                pictureBox.ImageLocation = null;
+                                doc.Delete();
+                                await LoadFolderAsync();
+                            } 
+                            catch(Exception ex)
+                            {
+                                MessageBox.Show(ex.Message);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -230,7 +307,32 @@ namespace DocumentOrganizerUI
                 WorkingDir = working.FullName,
                 GhostScriptPath = ghostScriptPath,
                 TesseractPath = ConfigurationManager.AppSettings["tesseractPath"]
-            });
+            },
+            progress: new Progress<Tuple<int, string>>(statusUpdate =>
+            {
+                int runnerId = statusUpdate.Item1;
+                string updateText = statusUpdate.Item2;
+                try
+                {
+                    Invoke((MethodInvoker)delegate
+                    {
+                        while (listViewStatus.Items.Count < runnerId)
+                        {
+                            listViewStatus.Items.Add("");
+                        }
+                        if (listViewStatus.Items.Count == runnerId)
+                        {
+                            listViewStatus.Items.Add(updateText);
+                        }
+                        else
+                        {
+                            listViewStatus.Items[runnerId].Text = updateText;
+                        }
+                        listViewStatus.Update();
+                    });
+                }
+                catch { }
+            }));
 
             processor.Start();
         }
@@ -243,6 +345,11 @@ namespace DocumentOrganizerUI
         private async void refreshToolStripMenuItem_Click(object sender, EventArgs e)
         {
             await LoadFolderAsync();
+        }
+
+        private void toggleStatusToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            splitContainer1.Panel2Collapsed = !splitContainer1.Panel2Collapsed;
         }
     }
 }

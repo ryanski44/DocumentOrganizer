@@ -15,8 +15,7 @@ namespace DocumentOrganizerUI
 {
     public partial class FilterAndSaveDialog : Form
     {
-        private static FileInfo filterFile = new FileInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DocOrganizer", "filter.json"));
-
+        private FileInfo filterFile;
         private List<Filter> filters;
         public FilterAndSaveDialog()
         {
@@ -31,6 +30,7 @@ namespace DocumentOrganizerUI
 
         private void FilterAndSaveControl_Load(object sender, EventArgs e)
         {
+            filterFile = new FileInfo(Path.Combine(BaseTargetDir, "filter.json"));
             filters = new List<Filter>();
             
             if(filterFile.Exists)

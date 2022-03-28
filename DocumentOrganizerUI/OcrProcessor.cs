@@ -19,53 +19,36 @@ namespace DocumentOrganizerUI
         private DirectoryInfo source;
         private DirectoryInfo working;
         private DirectoryInfo processed;
-        private DirectoryInfo preview50Dir;
-        private DirectoryInfo preview300Dir;
-        private DirectoryInfo textDir;
         private string ghostScriptPath;
         private string tesseractPath;
         private CancellationTokenSource cts;
         private List<Task> runners;
+        private IProgress<Tuple<int, string>> progress;
 
-        public OCRProcessor(FileProcessorConfiguration config)
+        public OCRProcessor(FileProcessorConfiguration config, IProgress<Tuple<int, string>> progress)
         {
             runners = new List<Task>();
-
+            this.progress = progress;
             source = new DirectoryInfo(config.SourceDir);
             processed = new DirectoryInfo(config.ProcessedDir);
             working = new DirectoryInfo(config.WorkingDir);
             ghostScriptPath = config.GhostScriptPath;
             tesseractPath = config.TesseractPath;
             cts = new CancellationTokenSource();
-
-            preview50Dir = new DirectoryInfo(Path.Combine(processed.FullName, "previews", "50"));
-            if (!preview50Dir.Exists)
-            {
-                preview50Dir.Create();
-            }
-            preview300Dir = new DirectoryInfo(Path.Combine(processed.FullName, "previews", "300"));
-            if (!preview300Dir.Exists)
-            {
-                preview300Dir.Create();
-            }
-            textDir = new DirectoryInfo(Path.Combine(processed.FullName, "previews", "text"));
-            if (!textDir.Exists)
-            {
-                textDir.Create();
-            }
         }
 
         public void Start()
         {
             var ct = cts.Token;
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < 10; i++)
             {
+                int runnerId = i;
                 runners.Add(Task.Run(async () =>
                 {
                     while (true)
                     {
-                        bool processed = await ProcessNextFile();
-
+                        bool processed = await ProcessNextFile(runnerId);
+                        progress.Report(new Tuple<int, string>(runnerId, "Idle"));
                         //if there was nothing to process, let's delay the next check for work
                         if (!processed)
                         {
@@ -93,10 +76,9 @@ namespace DocumentOrganizerUI
             }
         }
 
-        private static SemaphoreSlim createLock = new SemaphoreSlim(1);
         private static SemaphoreSlim fetchLock = new SemaphoreSlim(1);
 
-        public async Task<bool> ProcessNextFile()
+        public async Task<bool> ProcessNextFile(int runnerId)
         {
             FileInfo nextFile;
             DirectoryInfo tempDir = new DirectoryInfo(Path.Combine(working.FullName, Guid.NewGuid().ToString()));
@@ -109,6 +91,7 @@ namespace DocumentOrganizerUI
                     nextFile = source.GetFiles().FirstOrDefault();
                     if (nextFile != null)
                     {
+                        progress.Report(new Tuple<int, string>(runnerId, nextFile.Name));
                         var oldPath = nextFile.FullName;
                         var workingPath = Path.Combine(tempDir.FullName, nextFile.Name);
                         nextFile.MoveTo(workingPath);
@@ -127,19 +110,8 @@ namespace DocumentOrganizerUI
 
                 if (nextFile != null)
                 {
-                    FileInfo processedFile;
-                    await createLock.WaitAsync();
-                    try
-                    {
-                        processedFile = new FileInfo(GetUniqueOutputFilePath(Path.Combine(processed.FullName, nextFile.NameWithoutExtension() + ".pdf")));
-                        //create an empty file to reserve this name
-                        processedFile.Create().Close();
-                    }
-                    finally
-                    {
-                        createLock.Release();
-                    }
-
+                    Document document = Document.CreateNewFromRootDirectory(processed, nextFile.NameWithoutExtension());
+                    
                     if (nextFile.Extension.Equals(".pdf", StringComparison.InvariantCultureIgnoreCase))
                     {
                         bool hasText = false;
@@ -212,7 +184,7 @@ namespace DocumentOrganizerUI
 
                             if (pages.Count == 1)
                             {
-                                MoveAndOverwrite(Path.Combine(tempDir.FullName, pages[0]), processedFile.FullName);
+                                MoveAndOverwrite(Path.Combine(tempDir.FullName, pages[0]), document.ProcessedFile.FullName);
                             }
                             else if (pages.Count > 1)
                             {
@@ -220,17 +192,16 @@ namespace DocumentOrganizerUI
                                 string inputFilesCommandLine = String.Join(" ", pages);
                                 RunSilentProcess(ghostScriptPath, tempDir.FullName, $"-q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dPDFSETTINGS=/prepress -sOutputFile=output.pdf {inputFilesCommandLine}");
 
-                                MoveAndOverwrite(Path.Combine(tempDir.FullName, "output.pdf"), processedFile.FullName);
+                                MoveAndOverwrite(Path.Combine(tempDir.FullName, "output.pdf"), document.ProcessedFile.FullName);
                                 foreach (var page in pages)
                                 {
                                     File.Delete(Path.Combine(tempDir.FullName, page));
                                 }
                             }
-                            nextFile.Delete();
                         }
                         else//If it has a text layer, leave it as is. 
                         {
-                            MoveAndOverwrite(nextFile.FullName, processedFile.FullName);
+                            File.Copy(nextFile.FullName, document.ProcessedFile.FullName, true);
                         }
                     }
                     else//assume image
@@ -238,21 +209,24 @@ namespace DocumentOrganizerUI
                         //run tesseract.exe source output(without extension) -l eng PDF to get PDF file
                         RunSilentProcess(tesseractPath, tempDir.FullName, $"\"{nextFile.Name}\" \"{nextFile.NameWithoutExtension()}\" --oem 1 -l eng PDF");
 
-                        MoveAndOverwrite(Path.Combine(tempDir.FullName, nextFile.NameWithoutExtension() + ".pdf"), processedFile.FullName);
-                        nextFile.Delete();
+                        MoveAndOverwrite(Path.Combine(tempDir.FullName, nextFile.NameWithoutExtension() + ".pdf"), document.ProcessedFile.FullName);
                     }
 
                     //make previews
-                    RenderPDFToJpegFile(processedFile.FullName, 50, Path.Combine(preview50Dir.FullName, processedFile.NameWithoutExtension() + ".jpg"));
-                    RenderPDFToJpegFile(processedFile.FullName, 300, Path.Combine(preview300Dir.FullName, processedFile.NameWithoutExtension() + ".jpg"));
+                    RenderPDFToJpegFile(document.ProcessedFile.FullName, 50, document.Preview50File.FullName);
+                    RenderPDFToJpegFile(document.ProcessedFile.FullName, 300, document.Preview300File.FullName);
+                    
                     //output text
-                    File.WriteAllText(Path.Combine(textDir.FullName, processedFile.NameWithoutExtension() + ".txt"), ExtractText(processedFile.FullName));
+                    File.WriteAllText(document.PreviewTextFile.FullName, ExtractText(document.ProcessedFile.FullName));
+
+                    //save original file
+                    nextFile.MoveTo(document.OriginalFile.FullName);
                 }
                 tempDir.Delete(true);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.ToString());
+                Console.WriteLine(ex.ToString());
             }
             return false;
         }
